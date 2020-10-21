@@ -722,9 +722,12 @@ static void check_spread(struct cfs_rq *cfs_rq, struct sched_entity *se)
 #endif
 }
 
+//place_entity()函数在进程创建以及唤醒的时候都会调用，创建进程的时候传递参数 initial=1。
+//主要目的是更新调度实体得到虚拟时间（se->vruntime成员）。
 static void
 place_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int initial)
 {
+	//以当前运行队列的 min_vruntime 值为基础
 	u64 vruntime = cfs_rq->min_vruntime;
 
 	/*
@@ -733,8 +736,10 @@ place_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int initial)
 	 * little, place the new task so that it fits in the slot that
 	 * stays open at the end.
 	 */
+	//START_DEBIT 表示新进程是否需要"记账", 需要则加上新进程在一
+	//个调度周期内的 vruntime 值大小, 表示新进程在这一个调度周期内已经运行过了
 	if (initial && sched_feat(START_DEBIT))
-		vruntime += sched_vslice(cfs_rq, se);
+		vruntime += sched_vslice(cfs_rq, se); //sched_vslice 函数就是计算一个调度周期内新进程的 vruntime 值大小
 
 	/* sleeps up to a single latency don't count. */
 	if (!initial && sched_feat(FAIR_SLEEPERS)) {
@@ -1666,17 +1671,24 @@ wakeup_gran(struct sched_entity *curr, struct sched_entity *se)
  *  w(c, s3) =  1
  *
  */
+//判断新进程是否可以抢占当前进程
 static int
 wakeup_preempt_entity(struct sched_entity *curr, struct sched_entity *se)
 {
 	s64 gran, vdiff = curr->vruntime - se->vruntime;
 
-	if (vdiff <= 0)
+	if (vdiff <= 0)                //新进程的 vruntime 值比当前进程的大, 则不发生抢占
 		return -1;
 
-	gran = wakeup_gran(curr, se);
-	if (vdiff > gran)
+	gran = wakeup_gran(curr, se);  //判断发生抢占时的调度粒度
+	if (vdiff > gran)              //两个进程之间的差值大于调度粒度时, 发生抢占
 		return 1;
+
+    //调度粒度的设置, 是为了防止这么一个情况: 
+    //新进程的 vruntime 值只比当前进程的 vruntime 小一点点, 如果此时发生重新调度, 
+    //则新进程只运行一点点时间后, 其 vruntime 值就会大于前面被抢占的进程的 vruntime 值, 
+    //这样又会发生抢占, 所以这样的情况下, 系统会发生频繁的切换.
+    //故, 只有当新进程的 vruntime 值比当前进程的 vruntime 值小于调度粒度之外, 才发生抢占.
 
 	return 0;
 }
@@ -1703,6 +1715,7 @@ static void set_next_buddy(struct sched_entity *se)
 static void check_preempt_wakeup(struct rq *rq, struct task_struct *p, int wake_flags)
 {
 	struct task_struct *curr = rq->curr;
+	//se是当前进程，pse是新进程
 	struct sched_entity *se = &curr->se, *pse = &p->se;
 	struct cfs_rq *cfs_rq = task_cfs_rq(curr);
 	int sync = wake_flags & WF_SYNC;
@@ -1752,7 +1765,7 @@ static void check_preempt_wakeup(struct rq *rq, struct task_struct *p, int wake_
 	update_curr(cfs_rq);
 	find_matching_se(&se, &pse);
 	BUG_ON(!pse);
-	if (wakeup_preempt_entity(se, pse) == 1)
+	if (wakeup_preempt_entity(se, pse) == 1)  //判断新进程是否可以抢占当前进程
 		goto preempt;
 
 	return;
@@ -3577,6 +3590,7 @@ static void task_tick_fair(struct rq *rq, struct task_struct *curr, int queued)
 static void task_fork_fair(struct task_struct *p)
 {
 	struct cfs_rq *cfs_rq = task_cfs_rq(current);
+	//se 是子进程的；curr 是父进程的
 	struct sched_entity *se = &p->se, *curr = cfs_rq->curr;
 	int this_cpu = smp_processor_id();
 	struct rq *rq = this_rq();
@@ -3585,23 +3599,38 @@ static void task_fork_fair(struct task_struct *p)
 	raw_spin_lock_irqsave(&rq->lock, flags);
 
 	if (unlikely(task_cpu(p) != this_cpu))
-		__set_task_cpu(p, this_cpu);
+		__set_task_cpu(p, this_cpu);         //设置新进程在哪个 cpu 上运行
 
-	update_curr(cfs_rq);
+	update_curr(cfs_rq);                     //更新当前进程的 vruntime 值
 
 	if (curr)
-		se->vruntime = curr->vruntime;
-	place_entity(cfs_rq, se, 1);
+		se->vruntime = curr->vruntime;       //把父进程的 vruntime 赋值给子进程
+	place_entity(cfs_rq, se, 1);             //设置子进程的 vruntime 值, 1 表示是新创建的进程
 
+    //sysctl_sched_child_runs_first 值表示是否设置了让子进程先运行
+    //当子进程的 vruntime 值大于父进程的 vruntime 时, 交换两个进程的 vruntime 值
 	if (sysctl_sched_child_runs_first && curr && entity_before(curr, se)) {
 		/*
 		 * Upon rescheduling, sched_class::put_prev_task() will place
 		 * 'current' within the tree based on its new key value.
 		 */
 		swap(curr->vruntime, se->vruntime);
+		//设置重新调度标志 TIF_NEED_RESCHED
 		resched_task(rq->curr);
 	}
 
+	//这里为什么要减去cfs_rq->min_vruntime呢？
+	//因为现在计算进程的vruntime是基于当前cpu上的cfs_rq，
+	//并且现在还没有加入当前cfs_rq的就绪队列上。
+	//等到当前进程创建完毕开始唤醒的时候，加入的就绪队列就不一定是现在计算基于的cpu。
+	//所以，在加入就绪队列的函数中会根据情况加上当前就绪队列cfs_rq->min_vruntime。
+	//为什么要“先减后加”处理呢？假设cpu0上的cfs就绪队列的最小虚拟时间min_vruntime的值是1000000，
+	//此时创建进程的时候赋予当前进程虚拟时间是1000500。
+	//但是，唤醒此进程加入的就绪队列却是cpu1上CFS就绪队列，
+	//cpu1上的cfs就绪队列的最小虚拟时间min_vruntime的值如果是9000000。
+	//如果不采用“先减后加”的方法，那么该进程在cpu1上运行肯定是“乐坏”了，疯狂的运行。
+	//现在的处理计算得到的调度实体的虚拟时间是1000500 - 1000000 + 9000000 = 9000500，
+	//因此事情就不是那么的糟糕。
 	se->vruntime -= cfs_rq->min_vruntime;
 
 	raw_spin_unlock_irqrestore(&rq->lock, flags);
