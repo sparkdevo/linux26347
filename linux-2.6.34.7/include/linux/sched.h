@@ -1089,14 +1089,14 @@ struct load_weight {
  */
 struct sched_entity {
 	struct load_weight	load;		/* for load-balancing */
-	struct rb_node		run_node;
+	struct rb_node		run_node;             //运行队列中的红黑树结点
 	struct list_head	group_node;
-	unsigned int		on_rq;
+	unsigned int		on_rq;                //进程现在是否处于 TASK_RUNNING 状态
 
-	u64			exec_start;
-	u64			sum_exec_runtime;
-	u64			vruntime;
-	u64			prev_sum_exec_runtime;
+	u64			exec_start;                   //??????????????????????????
+	u64			sum_exec_runtime;             //进程从出生开始, 已经运行的实际时间
+	u64			vruntime;                     //虚拟运行时间
+	u64			prev_sum_exec_runtime;        //本次调度之前, 进程已经运行的实际时间
 
 	u64			last_wakeup;
 	u64			avg_overlap;
@@ -1143,7 +1143,7 @@ struct sched_entity {
 #ifdef CONFIG_FAIR_GROUP_SCHED
 	struct sched_entity	*parent;
 	/* rq on which this entity is (to be) queued: */
-	struct cfs_rq		*cfs_rq;
+	struct cfs_rq		*cfs_rq;                    //进程此时所在的 fair 队列
 	/* rq "owned" by this entity/group: */
 	struct cfs_rq		*my_q;
 #endif

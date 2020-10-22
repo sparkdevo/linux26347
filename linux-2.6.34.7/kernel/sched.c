@@ -1279,23 +1279,26 @@ static void sched_rt_avg_update(struct rq *rq, u64 rt_delta)
 {
 }
 #endif /* CONFIG_SMP */
-
+//WMULT_CONST 是 1.0 的近似值
 #if BITS_PER_LONG == 32
 # define WMULT_CONST	(~0UL)
 #else
 # define WMULT_CONST	(1UL << 32)
 #endif
 
+//WMULT_SHIFT (=32)是将两个32.32的值相乘的结果归一化为32.32所需的正确移位值
 #define WMULT_SHIFT	32
 
 /*
  * Shift right and round:
  */
+//it computes the rounded result of x / 2的y次方
 #define SRR(x, y) (((x) + (1UL << ((y) - 1))) >> (y))
 
 /*
  * delta *= weight / lw
  */
+//看不懂，让人很心痛???
 static unsigned long
 calc_delta_mine(unsigned long delta_exec, unsigned long weight,
 		struct load_weight *lw)
@@ -3698,6 +3701,7 @@ pick_next_task(struct rq *rq)
 /*
  * schedule() is the main scheduler function.
  */
+//进程的主动调度函数是 schedule()，这个函数被无数个地方调用
 asmlinkage void __sched schedule(void)
 {
 	struct task_struct *prev, *next;
@@ -3706,7 +3710,7 @@ asmlinkage void __sched schedule(void)
 	int cpu;
 
 need_resched:
-	preempt_disable();
+	preempt_disable();                //在这里面被抢占可能出现问题，先禁止它！
 	cpu = smp_processor_id();
 	rq = cpu_rq(cpu);
 	rcu_sched_qs(cpu);
@@ -3729,6 +3733,8 @@ need_resched_nonpreemptible:
 		if (unlikely(signal_pending_state(prev->state, prev)))
 			prev->state = TASK_RUNNING;
 		else
+			//出队, 此处主要是把prev->on_rq赋值为0, 因为当前进程本来就没在红黑树中. 
+			//on_rq 为 0 后, 后面的 put_prev_task 函数就不会把当前进程加入红黑树了
 			deactivate_task(rq, prev, 1);
 		switch_count = &prev->nvcsw;
 	}
@@ -3738,8 +3744,8 @@ need_resched_nonpreemptible:
 	if (unlikely(!rq->nr_running))
 		idle_balance(cpu, rq);
 
-	put_prev_task(rq, prev);
-	next = pick_next_task(rq);
+	put_prev_task(rq, prev);          //把当前进程加入红黑树中
+	next = pick_next_task(rq);        //从红黑树中挑选出下一个要运行的进程, 并将其设置为当前进程
 
 	if (likely(prev != next)) {
 		sched_info_switch(prev, next);
@@ -3748,7 +3754,8 @@ need_resched_nonpreemptible:
 		rq->nr_switches++;
 		rq->curr = next;
 		++*switch_count;
-
+		
+        //完成进程切换
 		context_switch(rq, prev, next); /* unlocks the rq */
 		/*
 		 * the context switch might have flipped the stack from under
@@ -3768,6 +3775,7 @@ need_resched_nonpreemptible:
 	}
 
 	preempt_enable_no_resched();
+	//这里新进程也可能有 TIF_NEED_RESCHED 标志，如果新进程也需要调度则再调度一次
 	if (need_resched())
 		goto need_resched;
 }

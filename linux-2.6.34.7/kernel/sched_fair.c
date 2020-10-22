@@ -54,6 +54,7 @@ enum sched_tunable_scaling sysctl_sched_tunable_scaling
  * Minimal preemption granularity for CPU-bound tasks:
  * (default: 1 msec * (1 + ilog(ncpus)), units: nanoseconds)
  */
+//调度的最小粒度为 1 毫秒
 unsigned int sysctl_sched_min_granularity = 1000000ULL;
 unsigned int normalized_sysctl_sched_min_granularity = 1000000ULL;
 
@@ -431,6 +432,7 @@ static inline unsigned long
 calc_delta_fair(unsigned long delta, struct sched_entity *se)
 {
 	if (unlikely(se->load.weight != NICE_0_LOAD))
+		//注意：这里计算 vruntime 使用的是 delta*(1024/&se->load)
 		delta = calc_delta_mine(delta, NICE_0_LOAD, &se->load);
 
 	return delta;
@@ -444,6 +446,10 @@ calc_delta_fair(unsigned long delta, struct sched_entity *se)
  *
  * p = (nr <= nl) ? l : l*nr/nl
  */
+//获得调度周期
+//默认的调度周期为 5 毫秒
+//如果当前运行队列中的进程数(nr_running)大于 5
+//就让调度周期等于 nr_running 毫秒
 static u64 __sched_period(unsigned long nr_running)
 {
 	u64 period = sysctl_sched_latency;
@@ -463,15 +469,18 @@ static u64 __sched_period(unsigned long nr_running)
  *
  * s = p*P[w/rw]
  */
+//计算出当前进程的动态时间片
 static u64 sched_slice(struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
 	u64 slice = __sched_period(cfs_rq->nr_running + !se->on_rq);
 
 	for_each_sched_entity(se) {
+	//for (; se; se = se->parent) {
 		struct load_weight *load;
 		struct load_weight lw;
 
 		cfs_rq = cfs_rq_of(se);
+		//整个队列的 load
 		load = &cfs_rq->load;
 
 		if (unlikely(!se->on_rq)) {
@@ -490,6 +499,8 @@ static u64 sched_slice(struct cfs_rq *cfs_rq, struct sched_entity *se)
  *
  * vs = s/w
  */
+//计算一个调度周期内新进程的 vruntime 值大小
+//注意：这个只是给新进程使用的！
 static u64 sched_vslice(struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
 	return calc_delta_fair(sched_slice(cfs_rq, se), se);
@@ -499,6 +510,7 @@ static u64 sched_vslice(struct cfs_rq *cfs_rq, struct sched_entity *se)
  * Update the current task's runtime statistics. Skip current tasks that
  * are not in our scheduling class.
  */
+//更新当前进程的 vruntime 和实际运行时间
 static inline void
 __update_curr(struct cfs_rq *cfs_rq, struct sched_entity *curr,
 	      unsigned long delta_exec)
@@ -506,18 +518,27 @@ __update_curr(struct cfs_rq *cfs_rq, struct sched_entity *curr,
 	unsigned long delta_exec_weighted;
 
 	schedstat_set(curr->exec_max, max((u64)delta_exec, curr->exec_max));
-
+    //sum_exec_runtime 等于进程从创建开始占用 CPU 的总时间
 	curr->sum_exec_runtime += delta_exec;
 	schedstat_add(cfs_rq, exec_clock, delta_exec);
+	//vruntime(delta_exec_weighted) = 实际运行时间(delta_exec) * 1024 / 进程权重
 	delta_exec_weighted = calc_delta_fair(delta_exec, curr);
 
+    //将进程刚刚运行的时间换算成 vruntime 后立刻加到进程的vruntime上
 	curr->vruntime += delta_exec_weighted;
+
+	//因为有进程的 vruntime 变了，因此 cfs_rq 的 min_vruntime 可能也要变化，更新它。  
+    //就是先取 tmp = min(curr->vruntime, leftmost->vruntime)  
+    //然后 cfs_rq->min_vruntime = max(tmp, cfs_rq->min_vruntime) ???
 	update_min_vruntime(cfs_rq);
 }
 
+//Update run-time statistics of the 'current'.
 static void update_curr(struct cfs_rq *cfs_rq)
 {
 	struct sched_entity *curr = cfs_rq->curr;
+	//rq.clock 在每个时钟中断中都会被更新为当前时间
+	//更新在 scheduler_tick 函数中执行
 	u64 now = rq_of(cfs_rq)->clock;
 	unsigned long delta_exec;
 
@@ -529,10 +550,14 @@ static void update_curr(struct cfs_rq *cfs_rq)
 	 * since the last time we changed load (this cannot
 	 * overflow on 32 bits):
 	 */
+	//last time we changed load 指的是什么???
+	//delta_exec 计算本次更新虚拟时间距离上次更新虚拟时间的差值
+	//curr->exec_start 为上个上个时钟周期开始的时间，在下面的代码中被设置
 	delta_exec = (unsigned long)(now - curr->exec_start);
 	if (!delta_exec)
 		return;
 
+    //更新当前进程的 vruntime 和实际运行时间
 	__update_curr(cfs_rq, curr, delta_exec);
 	curr->exec_start = now;
 
@@ -741,7 +766,8 @@ place_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int initial)
 	if (initial && sched_feat(START_DEBIT))
 		vruntime += sched_vslice(cfs_rq, se); //sched_vslice 函数就是计算一个调度周期内新进程的 vruntime 值大小
 
-	/* sleeps up to a single latency don't count. */
+	/* sleeps up to a single latency don't count. 睡眠时间不计入单次延迟。*/
+	//唤醒睡眠进程时传入的 initial 为 0
 	if (!initial && sched_feat(FAIR_SLEEPERS)) {
 		unsigned long thresh = sysctl_sched_latency;
 
@@ -762,10 +788,12 @@ place_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int initial)
 		if (sched_feat(GENTLE_FAIR_SLEEPERS))
 			thresh >>= 1;
 
+        //对睡眠进程的 vruntime 补偿
 		vruntime -= thresh;
 	}
 
 	/* ensure we never gain time by being placed backwards. */
+	//防止短期睡眠的进程 vruntime 值获得补偿
 	vruntime = max_vruntime(se->vruntime, vruntime);
 
 	se->vruntime = vruntime;
@@ -781,24 +809,30 @@ enqueue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int flags)
 	 * Update the normalized vruntime before updating min_vruntime
 	 * through callig update_curr().
 	 */
+	//现在的内核代码是这样处理睡眠进程 vruntime 值的
+    //睡眠进程出队时, 其 vruntime 值没变. 
+    //但是睡眠进程入队时, 先减去其原来 cfs_rq 队列上此时的 min_vruntime 值,(在哪里操作的??)
+    //再选择 cpu, 再加上选
+    //择的 cfs_rq 队列的 min_vruntime 值(下面的if语句处), 再调用 place_entity 来调整
 	if (!(flags & ENQUEUE_WAKEUP) || (flags & ENQUEUE_MIGRATE))
 		se->vruntime += cfs_rq->min_vruntime;
 
 	/*
 	 * Update run-time statistics of the 'current'.
 	 */
-	update_curr(cfs_rq);
+	//更新当前进程的时间值
+	update_curr(cfs_rq);       
 	account_entity_enqueue(cfs_rq, se);
 
 	if (flags & ENQUEUE_WAKEUP) {
-		place_entity(cfs_rq, se, 0);
+		place_entity(cfs_rq, se, 0);      //调整睡眠进程的 vruntime, 0 表示是睡眠进程
 		enqueue_sleeper(cfs_rq, se);
 	}
 
 	update_stats_enqueue(cfs_rq, se);
 	check_spread(cfs_rq, se);
 	if (se != cfs_rq->curr)
-		__enqueue_entity(cfs_rq, se);
+		__enqueue_entity(cfs_rq, se);     //将进程加入红黑树
 }
 
 static void __clear_buddies(struct cfs_rq *cfs_rq, struct sched_entity *se)
@@ -905,6 +939,8 @@ set_next_entity(struct cfs_rq *cfs_rq, struct sched_entity *se)
 		 * runqueue.
 		 */
 		update_stats_wait_end(cfs_rq, se);
+		//就是把结点从红黑树上取下来.当前运行进程不在红黑树上
+		//把新选出的进程移出红黑树
 		__dequeue_entity(cfs_rq, se);
 	}
 
@@ -921,6 +957,7 @@ set_next_entity(struct cfs_rq *cfs_rq, struct sched_entity *se)
 			se->sum_exec_runtime - se->prev_sum_exec_runtime);
 	}
 #endif
+	//记录本次调度之前总的已运行时间
 	se->prev_sum_exec_runtime = se->sum_exec_runtime;
 }
 
@@ -929,9 +966,12 @@ wakeup_preempt_entity(struct sched_entity *curr, struct sched_entity *se);
 
 static struct sched_entity *pick_next_entity(struct cfs_rq *cfs_rq)
 {
+	//__pick_next_entity 就是直接选择红黑树缓存的最左结点，也就是 vruntime 最小的结点
 	struct sched_entity *se = __pick_next_entity(cfs_rq);
 	struct sched_entity *left = se;
 
+	//如果选出的进程 vruntime 值比 next 和 last 指向的进程的 vruntime 值小到粒度之外, 
+	//则返回新选出的进程
 	if (cfs_rq->next && wakeup_preempt_entity(cfs_rq->next, left) < 1)
 		se = cfs_rq->next;
 
@@ -941,8 +981,7 @@ static struct sched_entity *pick_next_entity(struct cfs_rq *cfs_rq)
 	if (cfs_rq->last && wakeup_preempt_entity(cfs_rq->last, left) < 1)
 		se = cfs_rq->last;
 
-	clear_buddies(cfs_rq, se);
-
+	clear_buddies(cfs_rq, se);	
 	return se;
 }
 
@@ -956,11 +995,14 @@ static void put_prev_entity(struct cfs_rq *cfs_rq, struct sched_entity *prev)
 		update_curr(cfs_rq);
 
 	check_spread(cfs_rq, prev);
+	//此处表明只把还处于运行状态的进程加入红黑树, 如果是主动睡眠的进程, 
+	//on_rq 此时就为 0 了, 那么就不会把睡眠进程加入红黑树了
 	if (prev->on_rq) {
 		update_stats_wait_start(cfs_rq, prev);
 		/* Put 'current' back into the tree. */
 		__enqueue_entity(cfs_rq, prev);
 	}
+	//没有当前进程了，这个当前进程将在 pick_next_task 中更新
 	cfs_rq->curr = NULL;
 }
 
@@ -1798,8 +1840,8 @@ static struct task_struct *pick_next_task_fair(struct rq *rq)
 		return NULL;
 
 	do {
-		se = pick_next_entity(cfs_rq);
-		set_next_entity(cfs_rq, se);
+		se = pick_next_entity(cfs_rq);     //选出下一个要运行的进程
+		set_next_entity(cfs_rq, se);       //将选出的进程设置为当前进程
 		cfs_rq = group_cfs_rq(se);
 	} while (cfs_rq);
 
