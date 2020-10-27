@@ -1281,6 +1281,9 @@ static void sched_rt_avg_update(struct rq *rq, u64 rt_delta)
 #endif /* CONFIG_SMP */
 //WMULT_CONST 是 1.0 的近似值
 #if BITS_PER_LONG == 32
+//~ 位补运算符
+//~0UL 意味着0的补码将被解释为一个显式的无符号长整数
+//~0UL = 4294967295 or 0xffffffff
 # define WMULT_CONST	(~0UL)
 #else
 # define WMULT_CONST	(1UL << 32)
@@ -1298,7 +1301,6 @@ static void sched_rt_avg_update(struct rq *rq, u64 rt_delta)
 /*
  * delta *= weight / lw
  */
-//看不懂，让人很心痛???
 static unsigned long
 calc_delta_mine(unsigned long delta_exec, unsigned long weight,
 		struct load_weight *lw)
@@ -1380,6 +1382,10 @@ static const int prio_to_weight[40] = {
  * precalculated inverse to speed up arithmetics by turning divisions
  * into multiplications:
  */
+//prio_to_weight[20] = 1024
+//prio_to_wmult[20] = 2^32/1024 = 4194304
+//当一个数要除以 1024 时，就可以先乘以 4194304 再右移 32 位
+//calc_delta_mine 函数就是通过这种方式把除法转换成了乘法和移位操作
 static const u32 prio_to_wmult[40] = {
  /* -20 */     48388,     59856,     76040,     92818,    118348,
  /* -15 */    147320,    184698,    229616,    287308,    360437,
@@ -3740,6 +3746,7 @@ need_resched_nonpreemptible:
 		hrtick_clear(rq);
 
 	raw_spin_lock_irq(&rq->lock);
+	//更新 rq->clock
 	update_rq_clock(rq);
 	clear_tsk_need_resched(prev);
 

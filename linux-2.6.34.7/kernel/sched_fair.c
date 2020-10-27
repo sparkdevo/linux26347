@@ -534,11 +534,26 @@ __update_curr(struct cfs_rq *cfs_rq, struct sched_entity *curr,
 }
 
 //Update run-time statistics of the 'current'.
+//都有哪些时间点会调用 update_curr 更新 curr->vruntime ???
+//enqueue_entity 入队
+//dequeue_entity 出队
+//put_prev_entity 调用 __enqueue_entity 把进程入队(比如切换进程时)
+//entity_tick     在每个时钟周期处理函数中更新进程的调度信息(虚拟时间)
+//yield_task_fair ???
+//check_preempt_wakeup 创建进程或唤醒进程时通过 check_preempt_curr 函数调用
+//task_fork_fair  创建新进程时更新当前进程的 vruntime，然后调用 place_entity 设置新进程的 vruntime
+//moved_group_fair ???
 static void update_curr(struct cfs_rq *cfs_rq)
 {
 	struct sched_entity *curr = cfs_rq->curr;
-	//rq.clock 在每个时钟中断中都会被更新为当前时间
-	//更新在 scheduler_tick 函数中执行
+	//每次调用 update_curr 前都会更新 rq.clock
+	//1.时钟中断，rq.clock 在每个时钟中断中都会被更新为当前时间
+	//  更新在 scheduler_tick 函数中执行
+	//2.新建进程，task_fork_fair 函数通过 update_rq_clock(rq) 更新了 rq->clock	
+	//3.通过 schedule 函数调度执行进程，
+	//  schedule 函数中通过 update_rq_clock(rq) 更新了 rq->clock
+	//  因此在后面的 enqueue_entity、dequeue_entity 中都没有更新 rq->clock 的逻辑
+	//4.yield_task_fair 函数中也是先调用了 update_rq_clock(rq)
 	u64 now = rq_of(cfs_rq)->clock;
 	unsigned long delta_exec;
 
@@ -550,9 +565,11 @@ static void update_curr(struct cfs_rq *cfs_rq)
 	 * since the last time we changed load (this cannot
 	 * overflow on 32 bits):
 	 */
-	//last time we changed load 指的是什么???
+	//last time we changed load 指的是上次调用 update_curr函数
 	//delta_exec 计算本次更新虚拟时间距离上次更新虚拟时间的差值
-	//curr->exec_start 为上个上个时钟周期开始的时间，在下面的代码中被设置
+	//delta_exec 本身是真实的时间
+	//curr->exec_start 为上次更新 vruntime 的时间，在下面的代码中(update_curr函数)被设置
+	//另外，在调度函数 schedule 中 pick_next_task->set_next_entity->update_stats_curr_start 更新 se->exec_start
 	delta_exec = (unsigned long)(now - curr->exec_start);
 	if (!delta_exec)
 		return;
@@ -944,6 +961,7 @@ set_next_entity(struct cfs_rq *cfs_rq, struct sched_entity *se)
 		__dequeue_entity(cfs_rq, se);
 	}
 
+    //更新 se->exec_start!!!
 	update_stats_curr_start(cfs_rq, se);
 	cfs_rq->curr = se;
 #ifdef CONFIG_SCHEDSTATS
@@ -1012,6 +1030,7 @@ entity_tick(struct cfs_rq *cfs_rq, struct sched_entity *curr, int queued)
 	/*
 	 * Update run-time statistics of the 'current'.
 	 */
+	//在每个时钟周期处理函数中更新进程的调度信息(虚拟时间)
 	update_curr(cfs_rq);
 
 #ifdef CONFIG_SCHED_HRTICK
@@ -1757,7 +1776,7 @@ static void set_next_buddy(struct sched_entity *se)
 static void check_preempt_wakeup(struct rq *rq, struct task_struct *p, int wake_flags)
 {
 	struct task_struct *curr = rq->curr;
-	//se是当前进程，pse是新进程
+	//se 是当前进程，pse 是新进程
 	struct sched_entity *se = &curr->se, *pse = &p->se;
 	struct cfs_rq *cfs_rq = task_cfs_rq(curr);
 	int sync = wake_flags & WF_SYNC;
@@ -3634,7 +3653,10 @@ static void task_fork_fair(struct task_struct *p)
 	struct cfs_rq *cfs_rq = task_cfs_rq(current);
 	//se 是子进程的；curr 是父进程的
 	struct sched_entity *se = &p->se, *curr = cfs_rq->curr;
+
+	//当前CPU号
 	int this_cpu = smp_processor_id();
+	//当前进程所在的运行队列
 	struct rq *rq = this_rq();
 	unsigned long flags;
 

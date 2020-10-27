@@ -1092,12 +1092,20 @@ struct load_weight {
  *     6 se->load.weight
  */
 struct sched_entity {
+    //进程的权重
+    //在创建进程的过程中被初始化sched_fork->set_load_weight
+    //新进程的静态优先级是从父进程继承来的，
+    //也可以在创建新进程时把静态优先级设置为默认值，最后根据静态优先级来设置权重
 	struct load_weight	load;		/* for load-balancing */
+
+	
 	struct rb_node		run_node;             //运行队列中的红黑树结点
 	struct list_head	group_node;
 	unsigned int		on_rq;                //进程现在是否处于 TASK_RUNNING 状态
 
-	u64			exec_start;                   //??????????????????????????
+	//进程开始占用 CPU 的时间点
+	//可以查看 update_curr 函数处的注释了解 exec_start 都在什么时机被更新了
+	u64			exec_start;                   
 	u64			sum_exec_runtime;             //进程从出生开始, 已经运行的实际时间
 	u64			vruntime;                     //虚拟运行时间
 	u64			prev_sum_exec_runtime;        //本次调度之前, 进程已经运行的实际时间
@@ -1188,6 +1196,7 @@ struct task_struct {
 
 	int prio, static_prio, normal_prio;
 	unsigned int rt_priority;
+	//一般情况下这指向一个 fair_sched_class 结构
 	const struct sched_class *sched_class;
 	struct sched_entity se;
 	struct sched_rt_entity rt;
