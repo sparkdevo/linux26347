@@ -118,6 +118,10 @@ struct perf_event_context;
  *    the EXP_n values would be 1981, 2034 and 2043 if still using only
  *    11 bit fractions.
  */
+//这些都是用来伪造定点计算的常数。
+//11位小数通过乘法扩大到22位；这样一来，负载平均精度为10位整数+11位小数。
+//如果您想更频繁地计算负载平均数，您需要更高的精度，否则会出现四舍五入的情况。
+//在2秒的计数频率下，如果仍然只使用11位小数，EXP_n的值将是1981、2034和2043。
 extern unsigned long avenrun[];		/* Load averages */
 extern void get_avenrun(unsigned long *loads, unsigned long offset, int shift);
 

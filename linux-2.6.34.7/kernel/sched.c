@@ -3051,6 +3051,7 @@ calc_load(unsigned long load, unsigned long exp, unsigned long active)
 {
 	load *= exp;
 	load += active * (FIXED_1 - exp);
+	//转换回十进制
 	return load >> FSHIFT;
 }
 
@@ -3066,9 +3067,22 @@ void calc_global_load(void)
 	if (time_before(jiffies, upd))
 		return;
 
+    //calc_load_tasks 中是当前运行队列中 active 的进程数，其中包含 nr_uninterruptible 状态的进程
 	active = atomic_long_read(&calc_load_tasks);
 	active = active > 0 ? active * FIXED_1 : 0;
 
+    //计算平均负载的公式为：
+    //L(t) = L(t-1) e-δ/r + n(t) (1 - e-δ/r)
+    //e-δ/r 是 e 的负 r 分之 δ 次方
+	//L(t-1) 是上个时间点的负载
+	//n(t) 是当前活跃(active)的进程数，包含 nr_uninterruptible 状态的进程
+	//δ 执行负载计算的时间间隔，5s
+	//r 以秒为单位的平均负载时间，1分为 60s，5分为 300s
+    //其它复杂的计算过程为内核不支持浮点运算，需要转换为定点运算导致的。
+	
+    //一分钟平均负载的计算公式为：
+    //load(t) = load(t - 1) e-5/60 + n(1 - e-5/60)
+    //e-5/60 是 e 的负 60 分之 5 次方
 	avenrun[0] = calc_load(avenrun[0], EXP_1, active);
 	avenrun[1] = calc_load(avenrun[1], EXP_5, active);
 	avenrun[2] = calc_load(avenrun[2], EXP_15, active);
