@@ -503,6 +503,7 @@ static u64 sched_slice(struct cfs_rq *cfs_rq, struct sched_entity *se)
 //注意：这个只是给新进程使用的！
 static u64 sched_vslice(struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
+	//(调度周期 * 进程权重 / 所有进程总权重) * NICE_0_LOAD / 进程权重
 	return calc_delta_fair(sched_slice(cfs_rq, se), se);
 }
 
@@ -765,7 +766,8 @@ static void check_spread(struct cfs_rq *cfs_rq, struct sched_entity *se)
 }
 
 //place_entity()函数在进程创建以及唤醒的时候都会调用，创建进程的时候传递参数 initial=1。
-//主要目的是更新调度实体得到虚拟时间（se->vruntime成员）。
+//主要目的是更新调度实体的虚拟时间（se->vruntime成员）。
+//让新产生的进程和睡醒的进程的 vruntime 值不要太离谱。
 static void
 place_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int initial)
 {
@@ -777,11 +779,14 @@ place_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int initial)
 	 * however the extra weight of the new task will slow them down a
 	 * little, place the new task so that it fits in the slot that
 	 * stays open at the end.
+	 * 当前的时钟周期已经给了当前进程，???
 	 */
 	//START_DEBIT 表示新进程是否需要"记账", 需要则加上新进程在一
 	//个调度周期内的 vruntime 值大小, 表示新进程在这一个调度周期内已经运行过了
 	if (initial && sched_feat(START_DEBIT))
-		vruntime += sched_vslice(cfs_rq, se); //sched_vslice 函数就是计算一个调度周期内新进程的 vruntime 值大小
+		//sched_vslice 函数就是计算一个调度周期内新进程的 vruntime 值大小
+		//(调度周期 * 进程权重 / 所有进程总权重) * NICE_0_LOAD / 进程权重
+		vruntime += sched_vslice(cfs_rq, se); 
 
 	/* sleeps up to a single latency don't count. 睡眠时间不计入单次延迟。*/
 	//唤醒睡眠进程时传入的 initial 为 0
@@ -793,6 +798,9 @@ place_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int initial)
 		 * SCHED_IDLE is a special sub-class.  We care about
 		 * fairness only relative to other SCHED_IDLE tasks,
 		 * all of which have the same weight.
+		 * 将睡眠阈值转换为虚拟时间
+		 * SCHED_IDLE is a special sub-class.
+		 * 我们只关心相对于其他 SCHED_IDLE 任务的公平性，在这些任务具有相同的权重时。
 		 */
 		if (sched_feat(NORMALIZED_SLEEPER) && (!entity_is_task(se) ||
 				 task_of(se)->policy != SCHED_IDLE))
@@ -801,6 +809,7 @@ place_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int initial)
 		/*
 		 * Halve their sleep time's effect, to allow
 		 * for a gentler effect of sleepers:
+		 * 将其睡眠时间的效果减半，让睡眠者的效果更加温和。
 		 */
 		if (sched_feat(GENTLE_FAIR_SLEEPERS))
 			thresh >>= 1;
@@ -810,10 +819,17 @@ place_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int initial)
 	}
 
 	/* ensure we never gain time by being placed backwards. */
-	//防止短期睡眠的进程 vruntime 值获得补偿
+	//防止短期睡眠进程的 vruntime 值获得补偿
 	vruntime = max_vruntime(se->vruntime, vruntime);
 
 	se->vruntime = vruntime;
+	
+	//在新建进程是，调用该函数之前, 执行了 se->vruntime = curr->vruntime 语句
+	//也就是说新进程的 vruntime 值肯定是大于等于父进程 vruntime 值的
+	//如果没有设置子进程先运行, 则只要父进程本次调度运行的实际时间没有超过调度周期分配的实际时间值, 
+	//父进程就会先运行, 否则, 父子进程的先后执行顺序不确定
+	//所以在没有设置子进程先运行的系统上, 父进程先运行的概率还是很大的, 
+	//毕竟父进程本次调用运行的实际时间一般都不会超过调度周期分配的实际时间	
 }
 
 #define ENQUEUE_WAKEUP	1
