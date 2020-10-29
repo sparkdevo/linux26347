@@ -355,15 +355,24 @@ static inline struct task_group *task_group(struct task_struct *p)
 #endif	/* CONFIG_CGROUP_SCHED */
 
 /* CFS-related fields in a runqueue */
+//完全公平队列 cfs_rq，它描述运行在一个 cpu 上的处于 TASK_RUNNING 状态的普通进程的各种运行信息
+//每个 CPU 的 rq 会包含一个 cfs_rq，而每个组调度的 sched_entity 也会有自己的一个 cfs_rq 队列
 struct cfs_rq {
+    //运行队列总的进程权重
+    //在进程入队和出队时被更新：account_entity_enqueue，account_entity_dequeue
 	struct load_weight load;
-	unsigned long nr_running;
+	unsigned long nr_running;                //队列中的进程个数
 
-	u64 exec_clock;
+	u64 exec_clock;                          //运行的时钟???
+	/*
+	 * CFS 队列上的最小运行时间，两种情况下更新该值: 
+	 * 1、更新当前运行任务的累计运行时间时
+	 * 2、当任务从队列删除去，如任务睡眠或退出，这时候会查看剩下的任务的 vruntime 是否大于 min_vruntime，如果是则更新该值。
+     */
 	u64 min_vruntime;
 
-	struct rb_root tasks_timeline;
-	struct rb_node *rb_leftmost;
+	struct rb_root tasks_timeline;           //红黑树的根结点
+	struct rb_node *rb_leftmost;             //指向 vruntime 值最小的结点
 
 	struct list_head tasks;
 	struct list_head *balance_iterator;
@@ -372,11 +381,13 @@ struct cfs_rq {
 	 * 'curr' points to currently running entity on this cfs_rq.
 	 * It is set to NULL otherwise (i.e when none are currently running).
 	 */
+	//curr 指向当前运行的进程
 	struct sched_entity *curr, *next, *last;
 
 	unsigned int nr_spread_over;
 
 #ifdef CONFIG_FAIR_GROUP_SCHED
+    //CPU 的进程队列，每个 rq 包含一个实时进程队列、一个 cfs 队列
 	struct rq *rq;	/* cpu runqueue to which this cfs_rq is attached */
 
 	/*

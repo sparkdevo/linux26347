@@ -545,15 +545,15 @@ __update_curr(struct cfs_rq *cfs_rq, struct sched_entity *curr,
 }
 
 //Update run-time statistics of the 'current'.
-//都有哪些时间点会调用 update_curr 更新 curr->vruntime ???
-//enqueue_entity 入队
-//dequeue_entity 出队
-//put_prev_entity 调用 __enqueue_entity 把进程入队(比如切换进程时)
-//entity_tick     在每个时钟周期处理函数中更新进程的调度信息(虚拟时间)
-//yield_task_fair ???
+//都有哪些时间点会调用 update_curr 更新 curr->vruntime ?
+//enqueue_entity   入队
+//dequeue_entity   出队
+//put_prev_entity  调用 __enqueue_entity 把进程入队(比如切换进程时)
+//entity_tick      在每个时钟周期处理函数中更新进程的调度信息(虚拟时间)
 //check_preempt_wakeup 创建进程或唤醒进程时通过 check_preempt_curr 函数调用
-//task_fork_fair  创建新进程时更新当前进程的 vruntime，然后调用 place_entity 设置新进程的 vruntime
+//task_fork_fair   创建新进程时更新当前进程的 vruntime，然后调用 place_entity 设置新进程的 vruntime
 //moved_group_fair ???
+//yield_task_fair  ???
 static void update_curr(struct cfs_rq *cfs_rq)
 {
 	struct sched_entity *curr = cfs_rq->curr;
@@ -674,9 +674,11 @@ add_cfs_task_weight(struct cfs_rq *cfs_rq, unsigned long weight)
 }
 #endif
 
+//只在进程入队时被调用
 static void
 account_entity_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
+    //在进程入队时把进程的权重加到队列的总权重中
 	update_load_add(&cfs_rq->load, se->load.weight);
 	if (!parent_entity(se))
 		inc_cpu_load(rq_of(cfs_rq), se->load.weight);
@@ -688,9 +690,11 @@ account_entity_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 	se->on_rq = 1;
 }
 
+//只在进程出队时被调用
 static void
 account_entity_dequeue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
+	//在进程出时从队列的总权重中减去进程的权重
 	update_load_sub(&cfs_rq->load, se->load.weight);
 	if (!parent_entity(se))
 		dec_cpu_load(rq_of(cfs_rq), se->load.weight);
@@ -947,7 +951,10 @@ check_preempt_tick(struct cfs_rq *cfs_rq, struct sched_entity *curr)
     //ideal_runtime 就是此进程在一个调度周期中应该运行的实际时间
 	ideal_runtime = sched_slice(cfs_rq, curr);
 	//curr->sum_exec_runtime 在 update_curr 函数中被更新
-	//curr->prev_sum_exec_runtime 是在哪里被更新的???
+	//curr->prev_sum_exec_runtime 是在哪里被更新的?
+	//在 schedule 函数中，当进程被选择执行前，通过 set_next_entity 函数执行下面的语句：
+	//se->prev_sum_exec_runtime = se->sum_exec_runtime
+	//在这个时间点完成二者的同步。
 	delta_exec = curr->sum_exec_runtime - curr->prev_sum_exec_runtime;
 	if (delta_exec > ideal_runtime) {
 		//设置 TIF_NEED_RESCHED 标志值
