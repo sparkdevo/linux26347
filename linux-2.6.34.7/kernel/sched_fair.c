@@ -428,6 +428,8 @@ int sched_proc_update_handler(struct ctl_table *table, int write,
 /*
  * delta /= w
  */
+//由进程实际运行的时间 delta 计算出对应的 vruntime，公式如下：
+//vruntime(delta_exec_weighted) = 实际运行时间(delta) * 1024 / 进程权重
 static inline unsigned long
 calc_delta_fair(unsigned long delta, struct sched_entity *se)
 {
@@ -470,8 +472,13 @@ static u64 __sched_period(unsigned long nr_running)
  * s = p*P[w/rw]
  */
 //计算出当前进程的动态时间片
+//首先得到 CPU 的运行队列上每个任务可以运行一次的时间段(一个调度周期)，
+//然后根据调度周期、se(进程)的权重和运行队列的权重，计算出这个 se(进程)的动态时间片。
+//例如，假设调度周期为 10ms。如果运行队列中有两个进程，它们的 nice 都是默认值，所以它们的权重值相同。
+//运行队列的权重值将是 1024 + 1024，所以理想的时间片将是调度周期乘以50% (10ms*0.5=5ms)。
 static u64 sched_slice(struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
+    //获得当前调度周期的长度
 	u64 slice = __sched_period(cfs_rq->nr_running + !se->on_rq);
 
 	for_each_sched_entity(se) {
@@ -489,6 +496,7 @@ static u64 sched_slice(struct cfs_rq *cfs_rq, struct sched_entity *se)
 			update_load_add(&lw, se->load.weight);
 			load = &lw;
 		}
+		//分配给进程的理想运行时间(动态时间片) = 调度周期 * 进程权重 / 所有进程权重之和
 		slice = calc_delta_mine(slice, se->load.weight, load);
 	}
 	return slice;
@@ -525,7 +533,7 @@ __update_curr(struct cfs_rq *cfs_rq, struct sched_entity *curr,
 	//vruntime(delta_exec_weighted) = 实际运行时间(delta_exec) * 1024 / 进程权重
 	delta_exec_weighted = calc_delta_fair(delta_exec, curr);
 
-    //将进程刚刚运行的时间换算成 vruntime 后立刻加到进程的vruntime上
+    //将进程刚刚运行的时间换算成 vruntime 后立刻加到进程的 vruntime 上
 	curr->vruntime += delta_exec_weighted;
 
 	//因为有进程的 vruntime 变了，因此 cfs_rq 的 min_vruntime 可能也要变化，更新它。  
@@ -835,6 +843,7 @@ place_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int initial)
 #define ENQUEUE_WAKEUP	1
 #define ENQUEUE_MIGRATE 2
 
+//把进程加入到 cfs_rq 的红黑树中
 static void
 enqueue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int flags)
 {
@@ -842,11 +851,12 @@ enqueue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int flags)
 	 * Update the normalized vruntime before updating min_vruntime
 	 * through callig update_curr().
 	 */
-	//现在的内核代码是这样处理睡眠进程 vruntime 值的
+	//现在的内核代码是这样处理睡眠进程 vruntime 值的：
     //睡眠进程出队时, 其 vruntime 值没变. 
-    //但是睡眠进程入队时, 先减去其原来 cfs_rq 队列上此时的 min_vruntime 值,(在哪里操作的??)
-    //再选择 cpu, 再加上选
-    //择的 cfs_rq 队列的 min_vruntime 值(下面的if语句处), 再调用 place_entity 来调整
+    //但是睡眠进程醒来进入队列时, 
+    //先减去其原来 cfs_rq 队列上此时的 min_vruntime 值(try_to_wake_up->task_waking),
+    //选择 cpu, 再加上选择的 cfs_rq 队列的 min_vruntime 值(下面的if语句处),
+    //最后调用 place_entity 来调整
 	if (!(flags & ENQUEUE_WAKEUP) || (flags & ENQUEUE_MIGRATE))
 		se->vruntime += cfs_rq->min_vruntime;
 
@@ -924,14 +934,21 @@ dequeue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int sleep)
 /*
  * Preempt the current task with a newly woken task if needed:
  */
+//判断当前进程本次调度运行的实际时间是否已经大于其在一个调度周期分配得到的实际时间值, 
+//如果是则设置重新调度标志
+//这个函数只是在时钟周期处理函数中用来检查当前进程是否可以被抢占
 static void
 check_preempt_tick(struct cfs_rq *cfs_rq, struct sched_entity *curr)
 {
 	unsigned long ideal_runtime, delta_exec;
 
+    //ideal_runtime 就是此进程在一个调度周期中应该运行的实际时间
 	ideal_runtime = sched_slice(cfs_rq, curr);
+	//curr->sum_exec_runtime 在 update_curr 函数中被更新
+	//curr->prev_sum_exec_runtime 是在哪里被更新的???
 	delta_exec = curr->sum_exec_runtime - curr->prev_sum_exec_runtime;
 	if (delta_exec > ideal_runtime) {
+		//设置 TIF_NEED_RESCHED 标志值
 		resched_task(rq_of(cfs_rq)->curr);
 		/*
 		 * The current task ran long enough, ensure it doesn't get
@@ -957,6 +974,7 @@ check_preempt_tick(struct cfs_rq *cfs_rq, struct sched_entity *curr)
 		s64 delta = curr->vruntime - se->vruntime;
 
 		if (delta > ideal_runtime)
+			//设置 TIF_NEED_RESCHED 标志值
 			resched_task(rq_of(cfs_rq)->curr);
 	}
 }
@@ -1040,6 +1058,7 @@ static void put_prev_entity(struct cfs_rq *cfs_rq, struct sched_entity *prev)
 	cfs_rq->curr = NULL;
 }
 
+//在每个时钟周期处理函数中更新进程的调度信息(虚拟时间)
 static void
 entity_tick(struct cfs_rq *cfs_rq, struct sched_entity *curr, int queued)
 {
@@ -1067,6 +1086,7 @@ entity_tick(struct cfs_rq *cfs_rq, struct sched_entity *curr, int queued)
 #endif
 
 	if (cfs_rq->nr_running > 1 || !sched_feat(WAKEUP_PREEMPT))
+		//检查是否需要抢占当前进程
 		check_preempt_tick(cfs_rq, curr);
 }
 
@@ -1748,7 +1768,7 @@ wakeup_gran(struct sched_entity *curr, struct sched_entity *se)
  *  w(c, s3) =  1
  *
  */
-//判断新进程是否可以抢占当前进程
+//判断当前进程是否可以被抢占
 static int
 wakeup_preempt_entity(struct sched_entity *curr, struct sched_entity *se)
 {
@@ -1758,7 +1778,7 @@ wakeup_preempt_entity(struct sched_entity *curr, struct sched_entity *se)
 		return -1;
 
 	gran = wakeup_gran(curr, se);  //判断发生抢占时的调度粒度
-	if (vdiff > gran)              //两个进程之间的差值大于调度粒度时, 发生抢占
+	if (vdiff > gran)              //当前进程与另一个进程的差值大于调度粒度时, 发生抢占
 		return 1;
 
     //调度粒度的设置, 是为了防止这么一个情况: 
@@ -1789,6 +1809,7 @@ static void set_next_buddy(struct sched_entity *se)
 /*
  * Preempt the current task with a newly woken task if needed:
  */
+//检查是否可以抢占当前进程
 static void check_preempt_wakeup(struct rq *rq, struct task_struct *p, int wake_flags)
 {
 	struct task_struct *curr = rq->curr;
@@ -1842,7 +1863,7 @@ static void check_preempt_wakeup(struct rq *rq, struct task_struct *p, int wake_
 	update_curr(cfs_rq);
 	find_matching_se(&se, &pse);
 	BUG_ON(!pse);
-	if (wakeup_preempt_entity(se, pse) == 1)  //判断新进程是否可以抢占当前进程
+	if (wakeup_preempt_entity(se, pse) == 1)  //判断当前进程是否可以被抢占
 		goto preempt;
 
 	return;

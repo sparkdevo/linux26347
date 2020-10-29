@@ -2377,6 +2377,7 @@ int select_task_rq(struct task_struct *p, int sd_flags, int wake_flags)
  *
  * returns failure only if the task is already active.
  */
+//调整睡眠进程的 vruntime 值, 以及把睡眠进程加入红黑树中, 并判断是否可以发生抢占。
 static int try_to_wake_up(struct task_struct *p, unsigned int state,
 			  int wake_flags)
 {
@@ -2415,6 +2416,7 @@ static int try_to_wake_up(struct task_struct *p, unsigned int state,
 		rq->nr_uninterruptible--;
 	p->state = TASK_WAKING;
 
+    //task_waking 函数中执行了 se->vruntime -= cfs_rq->min_vruntime
 	if (p->sched_class->task_waking)
 		p->sched_class->task_waking(rq, p);
 
