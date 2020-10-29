@@ -476,6 +476,7 @@ static u64 __sched_period(unsigned long nr_running)
 //然后根据调度周期、se(进程)的权重和运行队列的权重，计算出这个 se(进程)的动态时间片。
 //例如，假设调度周期为 10ms。如果运行队列中有两个进程，它们的 nice 都是默认值，所以它们的权重值相同。
 //运行队列的权重值将是 1024 + 1024，所以理想的时间片将是调度周期乘以50% (10ms*0.5=5ms)。
+//分配给进程的理想运行时间(动态时间片) = 调度周期 * 进程权重 / 所有进程权重之和
 static u64 sched_slice(struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
     //获得当前调度周期的长度
@@ -511,7 +512,8 @@ static u64 sched_slice(struct cfs_rq *cfs_rq, struct sched_entity *se)
 //注意：这个只是给新进程使用的！
 static u64 sched_vslice(struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
-	//(调度周期 * 进程权重 / 所有进程总权重) * NICE_0_LOAD / 进程权重
+	//分配给进程的理想运行时间(动态时间片) = 调度周期 * 进程权重 / 所有进程权重之和
+	//(动态时间片) * NICE_0_LOAD / 进程权重	
 	return calc_delta_fair(sched_slice(cfs_rq, se), se);
 }
 
@@ -558,7 +560,7 @@ static void update_curr(struct cfs_rq *cfs_rq)
 	//每次调用 update_curr 前都会更新 rq.clock
 	//1.时钟中断，rq.clock 在每个时钟中断中都会被更新为当前时间
 	//  更新在 scheduler_tick 函数中执行
-	//2.新建进程，task_fork_fair 函数通过 update_rq_clock(rq) 更新了 rq->clock	
+	//2.新建进程，wake_up_new_task 函数通过 update_rq_clock(rq) 更新了 rq->clock	
 	//3.通过 schedule 函数调度执行进程，
 	//  schedule 函数中通过 update_rq_clock(rq) 更新了 rq->clock
 	//  因此在后面的 enqueue_entity、dequeue_entity 中都没有更新 rq->clock 的逻辑
@@ -773,7 +775,7 @@ static void check_spread(struct cfs_rq *cfs_rq, struct sched_entity *se)
 #endif
 }
 
-//place_entity()函数在进程创建以及唤醒的时候都会调用，创建进程的时候传递参数 initial=1。
+//place_entity() 函数在进程创建以及唤醒的时候都会调用，创建进程的时候传递参数 initial=1。
 //主要目的是更新调度实体的虚拟时间（se->vruntime成员）。
 //让新产生的进程和睡醒的进程的 vruntime 值不要太离谱。
 static void
@@ -832,7 +834,7 @@ place_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int initial)
 
 	se->vruntime = vruntime;
 	
-	//在新建进程是，调用该函数之前, 执行了 se->vruntime = curr->vruntime 语句
+	//在新建进程时，调用该函数之前, 执行了 se->vruntime = curr->vruntime 语句
 	//也就是说新进程的 vruntime 值肯定是大于等于父进程 vruntime 值的
 	//如果没有设置子进程先运行, 则只要父进程本次调度运行的实际时间没有超过调度周期分配的实际时间值, 
 	//父进程就会先运行, 否则, 父子进程的先后执行顺序不确定
@@ -3685,6 +3687,7 @@ static void task_tick_fair(struct rq *rq, struct task_struct *curr, int queued)
  *  - child not yet on the tasklist
  *  - preemption disabled
  */
+//初始化子进程的 vruntime 值
 static void task_fork_fair(struct task_struct *p)
 {
 	struct cfs_rq *cfs_rq = task_cfs_rq(current);
@@ -3720,17 +3723,17 @@ static void task_fork_fair(struct task_struct *p)
 		resched_task(rq->curr);
 	}
 
-	//这里为什么要减去cfs_rq->min_vruntime呢？
-	//因为现在计算进程的vruntime是基于当前cpu上的cfs_rq，
-	//并且现在还没有加入当前cfs_rq的就绪队列上。
-	//等到当前进程创建完毕开始唤醒的时候，加入的就绪队列就不一定是现在计算基于的cpu。
-	//所以，在加入就绪队列的函数中会根据情况加上当前就绪队列cfs_rq->min_vruntime。
-	//为什么要“先减后加”处理呢？假设cpu0上的cfs就绪队列的最小虚拟时间min_vruntime的值是1000000，
-	//此时创建进程的时候赋予当前进程虚拟时间是1000500。
-	//但是，唤醒此进程加入的就绪队列却是cpu1上CFS就绪队列，
-	//cpu1上的cfs就绪队列的最小虚拟时间min_vruntime的值如果是9000000。
-	//如果不采用“先减后加”的方法，那么该进程在cpu1上运行肯定是“乐坏”了，疯狂的运行。
-	//现在的处理计算得到的调度实体的虚拟时间是1000500 - 1000000 + 9000000 = 9000500，
+	//这里为什么要减去 cfs_rq->min_vruntime 呢？
+	//因为现在获得的 vruntime 是基于当前 cpu 上的 cfs_rq，
+	//并且该进程现在还没有加入当前 cfs_rq 的就绪队列上。
+	//等到当前进程创建完毕开始唤醒的时候，加入的就绪队列就不一定是现在计算基于的 cpu。
+	//所以，在加入就绪队列的函数中会根据情况加上当前就绪队列 cfs_rq->min_vruntime。
+	//为什么要“先减后加”处理呢？假设 cpu0 上的 cfs 就绪队列的最小虚拟时间 min_vruntime 的值是1000000，
+	//此时创建进程的时候赋予当前进程虚拟时间是 1000500。
+	//但是，唤醒此进程加入的就绪队列却是 cpu1 上 CFS 就绪队列，
+	//cpu1 上的 cfs 就绪队列的最小虚拟时间 min_vruntime 的值如果是 9000000。
+	//如果不采用“先减后加”的方法，那么该进程在 cpu1 上运行肯定是“乐坏”了，可以疯狂的运行。
+	//现在的处理计算得到的调度实体的虚拟时间是 1000500 - 1000000 + 9000000 = 9000500，
 	//因此事情就不是那么的糟糕。
 	se->vruntime -= cfs_rq->min_vruntime;
 
