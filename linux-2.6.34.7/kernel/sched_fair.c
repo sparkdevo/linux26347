@@ -992,7 +992,7 @@ set_next_entity(struct cfs_rq *cfs_rq, struct sched_entity *se)
 		 * runqueue.
 		 */
 		update_stats_wait_end(cfs_rq, se);
-		//就是把结点从红黑树上取下来.当前运行进程不在红黑树上
+		//就是把结点从红黑树上取下来，当前运行进程不在红黑树上。
 		//把新选出的进程移出红黑树
 		__dequeue_entity(cfs_rq, se);
 	}
@@ -1039,6 +1039,7 @@ static struct sched_entity *pick_next_entity(struct cfs_rq *cfs_rq)
 	return se;
 }
 
+//把进程加入到运行队列的红黑树中
 static void put_prev_entity(struct cfs_rq *cfs_rq, struct sched_entity *prev)
 {
 	/*
@@ -1056,7 +1057,7 @@ static void put_prev_entity(struct cfs_rq *cfs_rq, struct sched_entity *prev)
 		/* Put 'current' back into the tree. */
 		__enqueue_entity(cfs_rq, prev);
 	}
-	//没有当前进程了，这个当前进程将在 pick_next_task 中更新
+	//没有当前进程了，这个当前进程指针将在 pick_next_task 中更新
 	cfs_rq->curr = NULL;
 }
 

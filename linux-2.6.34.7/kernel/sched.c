@@ -3723,7 +3723,7 @@ pick_next_task(struct rq *rq)
 /*
  * schedule() is the main scheduler function.
  */
-//进程的主动调度函数是 schedule()，这个函数被无数个地方调用
+//进程调度函数 schedule()，这个函数被无数个地方调用
 asmlinkage void __sched schedule(void)
 {
 	struct task_struct *prev, *next;
@@ -3756,7 +3756,7 @@ need_resched_nonpreemptible:
 		if (unlikely(signal_pending_state(prev->state, prev)))
 			prev->state = TASK_RUNNING;
 		else
-			//出队, 此处主要是把prev->on_rq赋值为0, 因为当前进程本来就没在红黑树中. 
+			//出队, 此处主要是把 prev->on_rq 赋值为 0, 因为当前进程本来就没在红黑树中
 			//on_rq 为 0 后, 后面的 put_prev_task 函数就不会把当前进程加入红黑树了
 			deactivate_task(rq, prev, 1);
 		switch_count = &prev->nvcsw;
